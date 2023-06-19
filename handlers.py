@@ -21,50 +21,88 @@ logger = logging.getLogger(__name__)
 @dp.message_handler(commands=['start'])
 async def send_start_keyboard(msg: types.Message):
     logger.info(f"Received /start command from user {msg.from_user.id} | {msg.from_user.username}")
-    commands = ["help", "remind", "joke"]
+
+    # An extraction of the RESPONSE message from the database
+    conn = await connect_to_db()
+    response = await conn.fetchval("SELECT response FROM commands WHERE command = $1", "start")
+    await bot.send_message(msg.from_user.id, f"{response}, {msg.from_user.first_name}")
+
+    # An extraction of the AVAILABLE TELEGRAM-KEYBOARD ELEMENTS from the database
+    commands = await conn.fetch("SELECT command FROM panel_commands WHERE panel_id = (SELECT id FROM commands WHERE command = $1)", "start")
     keyboard = types.InlineKeyboardMarkup()
     for command in commands:
-        keyboard.add(types.InlineKeyboardButton(command, callback_data=command))
-    await bot.send_message(msg.from_user.id, f"Hello there! I'm a test bot made by Igor Ruzhilov (INO Studio). Nice to see you here, {msg.from_user.first_name}")
+        keyboard.add(types.InlineKeyboardButton(command['command'], callback_data=command['command']))
     await msg.reply("Here is the list of commands that I can do:", reply_markup=keyboard)
 
 
+# -------------------------- CALLBACK QUERY ------------------------------------------
 @dp.callback_query_handler()
 async def handle_callback_query(query: types.CallbackQuery):
     command = query.data
-    if command == "help":
-        logger.info(f"Received /help command from user {query.from_user.id} | {query.from_user.username}")
-        await bot.send_message(query.from_user.id, "Help is on the way! Here is the list of commands that I can do:\n/start\n/remind\n/joke")
-    elif command == "remind":
-        logger.info(f"Received /remind command from user {query.from_user.id} | {query.from_user.username}")
-        await bot.send_message(query.from_user.id, "How to use: /remind [date and time in format dd.mm.yy h:m] [reminder text]")
-    elif command == "joke":
-        logger.info(f"Received /joke command from user {query.from_user.id} | {query.from_user.username}")
-        async with aiohttp.ClientSession() as session:
-            async with session.get("https://official-joke-api.appspot.com/random_joke") as response:
-                data = await response.json()
-                joke = f"{data['setup']} {data['punchline']}"
-                await bot.send_message(query.from_user.id, joke)
+    conn = await connect_to_db()
+    response = await get_command_response(command)
+    logger.info(f"Received /{command} command from user: {query.from_user.id} | {query.from_user.username}")
 
+    if command == "help":
+        help_commands = await conn.fetch("SELECT command FROM commands")
+        commands_text = "\n".join([f"/{command['command']}" for command in help_commands if command['command'] != "help" and command['command'] != "start"])
+        response = f"{response}\n{commands_text}"
+        await bot.send_message(query.from_user.id, response)
+    elif command == "joke":
+        joke_text = await get_joke_text()
+        response = f"{response}\n{joke_text}"
+        await bot.send_message(query.from_user.id, response)
+
+
+async def get_command_response(command: str) -> str:
+    conn = await connect_to_db()
+    response = await conn.fetchval("SELECT response FROM commands WHERE command = $1", command)
+    return response
+
+
+async def get_joke_text() -> str:
+    async with aiohttp.ClientSession() as session:
+        async with session.get("https://official-joke-api.appspot.com/random_joke") as response:
+            data = await response.json()
+            joke_text = f"{data['setup']} {data['punchline']}"
+            return joke_text
+# --------------------------------------------------------------------------------------
+
+
+@dp.message_handler()
+async def handle_command(msg: types.Message):
+    if msg.is_command():
+        command = msg.get_command()[1:]
+        logger.info(f"Received /{command} command from user: {msg.from_user.id} | {msg.from_user.username}")
+        response = await get_command_response(command)
+        if response:
+            # ----------------- HELP COMMAND ---------------------------------------------
+            if command == "help":
+                conn = await connect_to_db()
+                commands = await conn.fetch("SELECT command FROM commands")
+                commands_text = "\n".join([f"/{command['command']}" for command in commands if command['command'] != "help" and command['command'] != "start"])
+                response = f"{response}\n{commands_text}"
+            # ----------------------------------------------------------------------------
+            await bot.send_message(msg.from_user.id, response)
+        else:
+            await msg.reply(f"Sorry, I don't have a response for the /{command} command.")
+    else:
+        await msg.reply("Sorry, I can't understand you! I was made only for functioning by commands. Send /help to see available ones.")
 
 async def schedule_reminder(reminder_id, chat_id, text, delay):
     await asyncio.sleep(delay)
     conn = await connect_to_db()
     await conn.execute("DELETE FROM reminders WHERE id = $1", reminder_id)
-    await bot.send_message(chat_id, f"Напоминание: {text}")
-
-
-@dp.message_handler(commands=['help'])
-async def send_help(msg: types.Message):
-    logger.info(f"Received /help command from user: {msg.from_user.id} | {msg.from_user.username}")
+    await bot.send_message(chat_id, f"Reminder: {text}")
 
 
 @dp.message_handler(commands=['remind'])
 async def set_reminder(msg: types.Message):
-    logger.info(f"Received /remind command from user {msg.from_user.id} | {msg.from_user.username}")
     args = msg.get_args().split(maxsplit=2)
     if len(args) != 3:
-        await msg.reply("How to use: /remind [date and time in format dd.mm.yy h:m] [reminder text]")
+        conn = await connect_to_db()
+        response = await conn.fetchval("SELECT response FROM commands WHERE command = $1", "remind")
+        await msg.reply(response)
         return
 
     try:
@@ -97,15 +135,9 @@ async def set_reminder(msg: types.Message):
 
 
 @dp.message_handler(commands=['joke'])
-async def send_joke(msg: types.Message):
-    logger.info(f"Received /joke command from user {msg.from_user.id} | {msg.from_user.username}")
-    async with aiohttp.ClientSession() as session:
-        async with session.get("https://official-joke-api.appspot.com/random_joke") as response:
-            data = await response.json()
-            joke = f"{data['setup']} {data['punchline']}"
-            await msg.reply(joke)
-
-
-@dp.message_handler()
-async def handle_unknown_messages(msg: types.Message):
-    await msg.reply("Sorry, I can't understand you! I was made only for functioning by commands. Send /help to see available ones.")
+async def handle_joke_command(msg: types.Message):
+    conn = await connect_to_db()
+    response = await conn.fetchval("SELECT response FROM commands WHERE command = $1", "joke")
+    joke_text = await get_joke_text()
+    response = f"{response}\n{joke_text}"
+    await bot.send_message(msg.from_user.id, response)
