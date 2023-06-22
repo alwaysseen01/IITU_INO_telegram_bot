@@ -1,3 +1,5 @@
+from typing import Union
+
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters import AdminFilter
 
@@ -22,10 +24,14 @@ class MyAdminFilter(AdminFilter):
         super().__init__()
         self.db = db
 
-    async def check(self, obj):
+    async def check(self, obj: Union[types.Message, types.CallbackQuery]):
         user_id = obj.from_user.id
         admins = await self.db.get_admins()
-        return user_id in admins
+        is_admin = user_id in admins
+        if isinstance(obj, types.CallbackQuery):
+            # Query callback checking
+            is_admin = is_admin and obj.data.startswith('admin_')
+        return is_admin
 
 
 class Form(StatesGroup):
@@ -47,7 +53,7 @@ def setup_admin_handlers(dp, db):
 
     @dp.message_handler(MyAdminFilter(db), commands=['remove_command'])
     async def handle_remove_command(msg: types.Message):
-        logger.info(f"Received a /remove_command command from user {msg.from_user.id} | {msg.from_user.username}")
+        logger.info(f"Received a /remove_command by admin {msg.from_user.id} | {msg.from_user.username}")
         await bot.send_message(msg.from_user.id,
                                "Which command you want to remove? (Enter the command name in formal '/some_command'): ")
         await Form.remove_command.set()
@@ -60,26 +66,28 @@ def setup_admin_handlers(dp, db):
             return
         command = command[1:]
         await db.remove_command(command)
+        logger.info(f"Command /{command} was removed by admin {msg.from_user.id} | {msg.from_user.username}")
         await msg.reply(f"Command /{command} was successfully removed.")
         await state.finish()
 
     @dp.message_handler(MyAdminFilter(db), commands=['add_command'])
     async def handle_add_command(msg: types.Message):
-        logger.info(f"Received a /add_command command from user {msg.from_user.id} | {msg.from_user.username}")
+        logger.info(f"Received a /add_command command by admin {msg.from_user.id} | {msg.from_user.username}")
         keyboard = types.InlineKeyboardMarkup()
         keyboard.add(
-            types.InlineKeyboardButton("Simple command with text answer", callback_data="add_command_response"))
+            types.InlineKeyboardButton("Command", callback_data="admin_add_command_response"))
         keyboard.add(
-            types.InlineKeyboardButton("Complex command with panel-options", callback_data="add_command_panel"))
+            types.InlineKeyboardButton("Panel", callback_data="admin_add_command_panel"))
         await msg.reply("Choose:", reply_markup=keyboard)
 
     @dp.callback_query_handler(MyAdminFilter(db))
     async def handle_add_command_callback(query: types.CallbackQuery, state: FSMContext):
-        if query.data == "add_command_response":
+        logger.info(f"Received a /{query.data} command from user {query.from_user.id} | {query.from_user.username}")
+        if query.data == "admin_add_command_response":
             await bot.send_message(query.from_user.id,
                                    "Please enter the command name (starting with '/') and the response text separated by a space.")
             await Form.command_response.set()
-        elif query.data == "add_command_panel":
+        elif query.data == "admin_add_command_panel":
             await bot.send_message(query.from_user.id, "Please enter the panel command name (starting with '/').")
             await Form.panel_command.set()
 
@@ -93,6 +101,7 @@ def setup_admin_handlers(dp, db):
         command = data[0][1:]
         response = data[1]
         await db.add_command(command, response)
+        logger.info(f"New command /{command} was added by admin {msg.from_user.id} | {msg.from_user.username}")
         await msg.reply(f"Command /{command} with response '{response}' was successfully added.")
         await state.finish()
 
@@ -106,6 +115,7 @@ def setup_admin_handlers(dp, db):
         command = data[0][1:]
         response = data[1] if len(data) > 1 else None
         panel_id = await db.add_panel(command, response)
+        logger.info(f"New panel /{command} was added by admin {msg.from_user.id} | {msg.from_user.username}")
         await msg.reply(
             f"Panel /{command} was successfully added. Now you can add subcommands to this panel. Please enter the subcommand name (starting with '/') and the response text separated by a space.")
         await state.update_data(panel_id=panel_id)
@@ -130,5 +140,6 @@ def setup_admin_handlers(dp, db):
         await db.add_panel_command(panel_id, subcommand)
         panel_command = await db.get_panel_command(panel_id)
         panel_name = panel_command['command']
+        logger.info(f"New subcommand /{subcommand} was added to panel /{panel_name} by admin {msg.from_user.id} | {msg.from_user.username}")
         await msg.reply(
             f"Subcommand /{subcommand} with response '{response}' was successfully added to panel /{panel_name}. To exit panel editing mode, enter /exit.")

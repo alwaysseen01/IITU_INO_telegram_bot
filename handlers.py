@@ -85,14 +85,20 @@ def setup_handlers(dp, db):
 
     @dp.message_handler(commands=['joke'])
     async def handle_joke_command(msg: types.Message):
+        logger.info(f"Received /joke command from user: {msg.from_user.id} | {msg.from_user.username}")
+        command = msg.get_command()
+        command = command[1:]
+        response = await db.get_command_response(command)
         async with aiohttp.ClientSession() as session:
-            async with session.get("https://v2.jokeapi.dev/joke/Any") as response:
-                data = await response.json()
+            async with session.get("https://v2.jokeapi.dev/joke/Any") as joke_response:
+                data = await joke_response.json()
                 if data['type'] == 'single':
-                    joke = data['joke']
+                    joke = "\n" + data['joke']
+                    response += joke
                 else:
-                    joke = f"{data['setup']}\n{data['delivery']}"
-                await bot.send_message(msg.chat.id, joke)
+                    joke = "\n" + f"{data['setup']}\n{data['delivery']}"
+                    response += joke
+                await bot.send_message(msg.from_user.id, response)
 
     @dp.message_handler()
     async def handle_custom_commands(msg: types.Message):
@@ -119,9 +125,37 @@ def setup_handlers(dp, db):
                 "Sorry, I can't understand you! I was made only for functioning by commands. Send /help to see available ones.")
 
     # -------------------------- CALLBACK QUERY ------------------------------------------
+    @dp.callback_query_handler(text="help")
+    async def handle_help_command_callback(query: types.CallbackQuery):
+        command = query.data
+        logger.info(f"Received /{command} command from user: {query.from_user.id} | {query.from_user.username}")
+        response = await db.get_command_response(command)
+        commands = await db.select_all_from_table("commands")
+        commands_text = "\n".join([f"/{command['command']}" for command in commands if
+                                   command['command'] != "help" and command['command'] != "start"])
+        response = f"{response}\n{commands_text}"
+        await bot.send_message(query.from_user.id, response)
+
+    @dp.callback_query_handler(text="joke")
+    async def handle_joke_command_callback(query: types.CallbackQuery):
+        command = query.data
+        logger.info(f"Received /joke command from user: {query.from_user.id} | {query.from_user.username}")
+        response = await db.get_command_response(command)
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://v2.jokeapi.dev/joke/Any") as joke_response:
+                data = await joke_response.json()
+                if data['type'] == 'single':
+                    joke = "\n" + data['joke']
+                    response += joke
+                else:
+                    joke = "\n" + f"{data['setup']}\n{data['delivery']}"
+                    response += joke
+                await bot.send_message(query.from_user.id, response)
+
     @dp.callback_query_handler()
     async def handle_callback_query(query: types.CallbackQuery):
         command = query.data
+        logger.info(f"Received /{command} command from user: {query.from_user.id} | {query.from_user.username}")
         response = await db.get_command_response(command)
         if response:
             panel_id = await db.get_panel_id(command)
