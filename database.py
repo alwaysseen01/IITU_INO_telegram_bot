@@ -26,6 +26,12 @@ class Database:
             response = await conn.fetchval("SELECT response FROM commands WHERE command = $1", command)
         return response
 
+    async def edit_command_response(self, command: str, new_response: str):
+        async with self.pool.acquire() as conn:
+            await conn.execute("UPDATE commands SET response = $1 WHERE command = $2",
+            new_response, command
+        )
+
     async def get_panel_commands(self, parent_command: str):
         async with self.pool.acquire() as conn:
             rows = await conn.fetch("SELECT command FROM panel_commands WHERE panel_id = (SELECT id FROM commands WHERE command = $1)", parent_command)
@@ -49,6 +55,12 @@ class Database:
 
     async def remove_command(self, command: str):
         async with self.pool.acquire() as conn:
+            panel_id = await conn.fetchval("SELECT id FROM commands WHERE command = $1", command)
+            if panel_id is not None:
+                child_commands = await conn.fetch("SELECT command FROM panel_commands WHERE panel_id = $1", panel_id)
+                for child_command in child_commands:
+                    await self.remove_command(child_command['command'])
+                await conn.execute("DELETE FROM panel_commands WHERE panel_id = $1", panel_id)
             await conn.execute("DELETE FROM commands WHERE command = $1", command)
 
     async def add_panel(self, command: str, response: str = None):

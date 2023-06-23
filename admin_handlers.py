@@ -39,6 +39,16 @@ class Form(StatesGroup):
     remove_command = State()
     panel_command = State()
     subcommand = State()
+    edit_panel = State()
+    edit_command_response = State()
+    edit_command_name = State()
+    edit_choice = State()
+    edit_command = State()
+    edit_subcommand_response = State()
+    edit_subcommand_name = State()
+    edit_subcommand = State()
+    edit_panel_response = State()
+    edit_panel_name = State()
 
 
 def setup_admin_handlers(dp, db):
@@ -51,11 +61,207 @@ def setup_admin_handlers(dp, db):
         else:
             await msg.reply("No, you are not an admin.")
 
+    @dp.message_handler(MyAdminFilter(db), commands=['edit_command'])
+    async def handle_edit_command(msg: types.Message):
+        logger.info(f"Received a /edit_command command by admin {msg.from_user.id} | {msg.from_user.username}")
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("Command", callback_data="admin_edit_command_response"))
+        keyboard.add(
+            types.InlineKeyboardButton("Panel", callback_data="admin_edit_command_panel"))
+        await msg.reply("Choose:", reply_markup=keyboard)
+
+    @dp.callback_query_handler(MyAdminFilter(db),
+                               lambda query: query.data in ["admin_edit_command_response", "admin_edit_command_panel"])
+    async def handle_edit_command_callback(query: types.CallbackQuery, state: FSMContext):
+        logger.info(f"Received a /{query.data} command from user {query.from_user.id} | {query.from_user.username}")
+        if query.data == "admin_edit_command_response":
+            await bot.send_message(query.from_user.id,
+                                   "Please enter the command name (starting with '/') that you want to edit.")
+            await Form.edit_command.set()
+        elif query.data == "admin_edit_command_panel":
+            await bot.send_message(query.from_user.id,
+                                   "Please enter the panel command name (starting with '/') that you want to edit.")
+            await Form.edit_panel.set()
+
+    @dp.message_handler(state=Form.edit_command)
+    async def edit_command_step(msg: types.Message, state: FSMContext):
+        data = msg.text.split(maxsplit=1)
+        if len(data) != 1 or not data[0].startswith('/'):
+            await msg.reply(
+                "Incorrect format. Please enter the command name (starting with '/') that you want to edit.")
+            return
+        command = data[0][1:]
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("Command", callback_data="admin_edit_command_name"))
+        keyboard.add(
+            types.InlineKeyboardButton("Response", callback_data="admin_edit_command_response"))
+        await msg.reply("Choose what you want to edit:", reply_markup=keyboard)
+        await state.update_data(command=command)
+        await Form.edit_choice.set()
+
+    @dp.callback_query_handler(MyAdminFilter(db),
+                               lambda query: query.data in ["admin_edit_command_name", "admin_edit_command_response"])
+    async def handle_edit_choice_callback(query: types.CallbackQuery, state: FSMContext):
+        logger.info(f"Received a /{query.data} command from user {query.from_user.id} | {query.from_user.username}")
+        if query.data == "admin_edit_command_name":
+            await bot.send_message(query.from_user.id,
+                                   "Please enter the new command name (starting with '/').")
+            await Form.edit_command_name.set()
+        elif query.data == "admin_edit_command_response":
+            await bot.send_message(query.from_user.id,
+                                   "Please enter the new response text.")
+            await Form.edit_command_response.set()
+
+    @dp.message_handler(state=Form.edit_command_name)
+    async def edit_command_name_step(msg: types.Message, state: FSMContext):
+        data = msg.text.split(maxsplit=1)
+        if len(data) != 1 or not data[0].startswith('/'):
+            await msg.reply(
+                "Incorrect format. Please enter the new command name (starting with '/').")
+            return
+        new_command = data[0][1:]
+        state_data = await state.get_data()
+        old_command = state_data['command']
+        await db.update_command_name(old_command, new_command)
+        logger.info(f"Command /{old_command} was updated by admin {msg.from_user.id} | {msg.from_user.username}")
+        await msg.reply(f"Command /{old_command} was successfully updated to /{new_command}.")
+        await state.finish()
+
+    @dp.message_handler(state=Form.edit_command_response)
+    async def edit_command_response_step(msg: types.Message, state: FSMContext):
+        new_response = msg.text
+        state_data = await state.get_data()
+        command = state_data['command']
+        await db.update_command_response(command, new_response)
+        logger.info(
+            f"Response for command /{command} was updated by admin {msg.from_user.id} | {msg.from_user.username}")
+        await msg.reply(f"Response for command /{command} was successfully updated to '{new_response}'.")
+        await state.finish()
+
+    @dp.message_handler(state=Form.edit_panel)
+    async def edit_panel_step(msg: types.Message, state: FSMContext):
+        data = msg.text.split(maxsplit=1)
+        if len(data) != 1 or not data[0].startswith('/'):
+            await msg.reply(
+                "Incorrect format. Please enter the panel command name (starting with '/') that you want to edit.")
+            return
+        command = data[0][1:]
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("Command", callback_data="admin_edit_panel_name"))
+        keyboard.add(
+            types.InlineKeyboardButton("Response", callback_data="admin_edit_panel_response"))
+        keyboard.add(
+            types.InlineKeyboardButton("Subcommand", callback_data="admin_edit_panel_subcommand"))
+        await msg.reply("Choose what you want to edit:", reply_markup=keyboard)
+        await state.update_data(command=command)
+        await Form.edit_choice.set()
+
+    @dp.callback_query_handler(MyAdminFilter(db),
+                               lambda query: query.data in ["admin_edit_panel_name", "admin_edit_panel_response", "admin_edit_panel_subcommand"])
+    async def handle_edit_choice_callback(query: types.CallbackQuery, state: FSMContext):
+        logger.info(f"Received a /{query.data} command from user {query.from_user.id} | {query.from_user.username}")
+        if query.data == "admin_edit_panel_name":
+            await bot.send_message(query.from_user.id,
+                                   "Please enter the new panel command name (starting with '/').")
+            await Form.edit_panel_name.set()
+        elif query.data == "admin_edit_panel_response":
+            await bot.send_message(query.from_user.id,
+                                   "Please enter the new response text.")
+            await Form.edit_panel_response.set()
+        elif query.data == "admin_edit_panel_subcommand":
+            await bot.send_message(query.from_user.id,
+                                   "Please enter the subcommand name (starting with '/') that you want to edit.")
+            await Form.edit_subcommand.set()
+
+    @dp.message_handler(state=Form.edit_panel_name)
+    async def edit_panel_name_step(msg: types.Message, state: FSMContext):
+        data = msg.text.strip()
+        if not data[0].startswith('/'):
+            await msg.reply(
+                "Incorrect format. Please enter the new panel command name (starting with '/').")
+            return
+        new_command = data[0][1:]
+        state_data = await state.get_data()
+        print(state_data)
+        old_command = state_data['command']
+        await db.update_command_name(old_command, new_command)
+        logger.info(f"Panel /{old_command} was updated by admin {msg.from_user.id} | {msg.from_user.username}")
+        await msg.reply(f"Panel /{old_command} was successfully updated to /{new_command}.")
+        await state.finish()
+
+    @dp.message_handler(state=Form.edit_panel_response)
+    async def edit_panel_response_step(msg: types.Message, state: FSMContext):
+        new_response = msg.text
+        state_data = await state.get_data()
+        command = state_data['command']
+        await db.update_command_response(command, new_response)
+        logger.info(f"Response for panel /{command} was updated by admin {msg.from_user.id} | {msg.from_user.username}")
+        await msg.reply(f"Response for panel /{command} was successfully updated to '{new_response}'.")
+        await state.finish()
+
+    @dp.message_handler(state=Form.edit_subcommand)
+    async def edit_subcommand_step(msg: types.Message, state: FSMContext):
+        data = msg.text.split(maxsplit=1)
+        if len(data) != 1 or not data[0].startswith('/'):
+            await msg.reply(
+                "Incorrect format. Please enter the subcommand name (starting with '/') that you want to edit.")
+            return
+        subcommand = data[0][1:]
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("Command", callback_data="admin_edit_subcommand_name"))
+        keyboard.add(
+            types.InlineKeyboardButton("Response", callback_data="admin_edit_subcommand_response"))
+        await msg.reply("Choose what you want to edit:", reply_markup=keyboard)
+        await state.update_data(subcommand=subcommand)
+
+    @dp.callback_query_handler(MyAdminFilter(db),
+                               lambda query: query.data in ["admin_edit_subcommand_name", "admin_edit_subcommand_response"])
+    async def handle_edit_choice_callback(query: types.CallbackQuery, state: FSMContext):
+        logger.info(f"Received a /{query.data} command from user {query.from_user.id} | {query.from_user.username}")
+        if query.data == "admin_edit_subcommand_name":
+            await bot.send_message(query.from_user.id,
+                                   "Please enter the new subcommand name (starting with '/').")
+            await Form.edit_subcommand_name.set()
+        elif query.data == "admin_edit_subcommand_response":
+            await bot.send_message(query.from_user.id,
+                                   "Please enter the new response text.")
+            await Form.edit_subcommand_response.set()
+
+    @dp.message_handler(state=Form.edit_subcommand_name)
+    async def edit_subcommand_name_step(msg: types.Message, state: FSMContext):
+        data = msg.text.split(maxsplit=1)
+        if len(data) != 1 or not data[0].startswith('/'):
+            await msg.reply(
+                "Incorrect format. Please enter the new subcommand name (starting with '/').")
+            return
+        new_command = data[0][1:]
+        state_data = await state.get_data()
+        old_command = state_data['subcommand']
+        await db.update_command_name(old_command, new_command)
+        logger.info(f"Subcommand /{old_command} was updated by admin {msg.from_user.id} | {msg.from_user.username}")
+        await msg.reply(f"Subcommand /{old_command} was successfully updated to /{new_command}.")
+        await state.finish()
+
+    @dp.message_handler(state=Form.edit_subcommand_response)
+    async def edit_subcommand_response_step(msg: types.Message, state: FSMContext):
+        new_response = msg.text
+        state_data = await state.get_data()
+        command = state_data['subcommand']
+        await db.update_command_response(command, new_response)
+        logger.info(
+            f"Response for subcommand /{command} was updated by admin {msg.from_user.id} | {msg.from_user.username}")
+        await msg.reply(f"Response for subcommand /{command} was successfully updated to '{new_response}'.")
+        await state.finish()
+
     @dp.message_handler(MyAdminFilter(db), commands=['remove_command'])
     async def handle_remove_command(msg: types.Message):
         logger.info(f"Received a /remove_command by admin {msg.from_user.id} | {msg.from_user.username}")
         await bot.send_message(msg.from_user.id,
-                               "Which command you want to remove? (Enter the command name in formal '/some_command'): ")
+                               "Which command you want to remove? (Enter the command name in form \"/some_command\"): ")
         await Form.remove_command.set()
 
     @dp.message_handler(state=Form.remove_command)
@@ -80,7 +286,7 @@ def setup_admin_handlers(dp, db):
             types.InlineKeyboardButton("Panel", callback_data="admin_add_command_panel"))
         await msg.reply("Choose:", reply_markup=keyboard)
 
-    @dp.callback_query_handler(MyAdminFilter(db))
+    @dp.callback_query_handler(MyAdminFilter(db), lambda query: query.data in ["admin_add_command_response", "admin_add_command_panel"])
     async def handle_add_command_callback(query: types.CallbackQuery, state: FSMContext):
         logger.info(f"Received a /{query.data} command from user {query.from_user.id} | {query.from_user.username}")
         if query.data == "admin_add_command_response":
@@ -88,7 +294,8 @@ def setup_admin_handlers(dp, db):
                                    "Please enter the command name (starting with '/') and the response text separated by a space.")
             await Form.command_response.set()
         elif query.data == "admin_add_command_panel":
-            await bot.send_message(query.from_user.id, "Please enter the panel command name (starting with '/').")
+            await bot.send_message(query.from_user.id,
+                                   "Please enter the panel command name (starting with '/') and the response text separated by a space.")
             await Form.panel_command.set()
 
     @dp.message_handler(state=Form.command_response)
@@ -108,7 +315,7 @@ def setup_admin_handlers(dp, db):
     @dp.message_handler(state=Form.panel_command)
     async def add_command_panel_step(msg: types.Message, state: FSMContext):
         data = msg.text.split(maxsplit=1)
-        if len(data) < 1 or not data[0].startswith('/'):
+        if len(data) != 2 or not data[0].startswith('/'):
             await msg.reply(
                 "Incorrect format. Please enter the panel command name (starting with '/') and the response text separated by a space.")
             return
