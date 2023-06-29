@@ -35,6 +35,8 @@ class MyAdminFilter(AdminFilter):
 
 
 class Form(StatesGroup):
+    add_admin_step = State()
+
     command_response = State()
 
     remove_command = State()
@@ -55,13 +57,37 @@ class Form(StatesGroup):
 
 def setup_admin_handlers(dp, db):
     @dp.message_handler(commands=['is_admin'])
-    async def handle_is_admin(msg: types.Message):
-        logger.info(f"Received a /is_admin command from user {msg.from_user.id} | {msg.from_user.username}")
+    async def handle_is_admin_command(msg: types.Message):
+        logger.info(f"Received a /is_admin command from admin {msg.from_user.id} | {msg.from_user.username}")
         is_admin = await MyAdminFilter(db).check(msg)
         if is_admin:
             await msg.reply("Yes, you are an admin.")
         else:
             await msg.reply("No, you are not an admin.")
+
+    @dp.message_handler(MyAdminFilter(db), commands=['add_admin'])
+    async def handle_add_admin_command(msg: types.Message):
+        logger.info(f"Received a /add_admin command from admin {msg.from_user.id} | {msg.from_user.username}")
+        await bot.send_message(msg.from_user.id, "Enter Telegram ID of user:")
+        await Form.add_admin_step.set()
+
+    @dp.message_handler(state=Form.add_admin_step)
+    async def add_admin_step(msg: types.Message, state: FSMContext):
+        try:
+            user_id = int(msg.text)
+        except ValueError:
+            await msg.reply("Incorrect format. Please enter a valid Telegram ID.")
+            return
+
+        try:
+            await bot.get_chat(user_id)
+        except Exception:
+            await msg.reply(f"There is no user with Telegram ID {user_id}.")
+            return
+
+        await db.add_admin(user_id)
+        await msg.reply(f"User with Telegram ID {user_id} was successfully added as an admin.")
+        await state.finish()
 
     @dp.message_handler(MyAdminFilter(db), commands=['edit_command'])
     async def handle_edit_command(msg: types.Message):
