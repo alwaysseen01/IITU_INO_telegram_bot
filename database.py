@@ -26,6 +26,17 @@ class Database:
             response = await conn.fetchval("SELECT response FROM commands WHERE command = $1", command)
         return response
 
+    async def update_command_name(self, old_command: str, new_command: str):
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE commands SET command = $1 WHERE command = $2",
+                new_command, old_command
+            )
+            await conn.execute(
+                "UPDATE panel_commands SET command = $1 WHERE command = $2",
+                new_command, old_command
+            )
+
     async def edit_command_response(self, command: str, new_response: str):
         async with self.pool.acquire() as conn:
             await conn.execute("UPDATE commands SET response = $1 WHERE command = $2",

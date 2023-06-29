@@ -36,19 +36,21 @@ class MyAdminFilter(AdminFilter):
 
 class Form(StatesGroup):
     command_response = State()
+
     remove_command = State()
+
     panel_command = State()
     subcommand = State()
-    edit_panel = State()
-    edit_command_response = State()
-    edit_command_name = State()
-    edit_choice = State()
+
     edit_command = State()
-    edit_subcommand_response = State()
-    edit_subcommand_name = State()
-    edit_subcommand = State()
-    edit_panel_response = State()
+    edit_panel = State()
+    edit_command_name = State()
+    edit_command_response = State()
     edit_panel_name = State()
+    edit_panel_response = State()
+    edit_panel_subcommand = State()
+    edit_subcommand_name = State()
+    edit_subcommand_response = State()
 
 
 def setup_admin_handlers(dp, db):
@@ -66,22 +68,22 @@ def setup_admin_handlers(dp, db):
         logger.info(f"Received a /edit_command command by admin {msg.from_user.id} | {msg.from_user.username}")
         keyboard = types.InlineKeyboardMarkup()
         keyboard.add(
-            types.InlineKeyboardButton("Command", callback_data="admin_edit_command_response"))
+            types.InlineKeyboardButton("Edit command", callback_data="admin_edit_command"))
         keyboard.add(
-            types.InlineKeyboardButton("Panel", callback_data="admin_edit_command_panel"))
+            types.InlineKeyboardButton("Edit panel-command", callback_data="admin_edit_panel_command"))
         await msg.reply("Choose:", reply_markup=keyboard)
 
     @dp.callback_query_handler(MyAdminFilter(db),
-                               lambda query: query.data in ["admin_edit_command_response", "admin_edit_command_panel"])
-    async def handle_edit_command_callback(query: types.CallbackQuery, state: FSMContext):
+                               lambda query: query.data in ["admin_edit_command", "admin_edit_panel_command"])
+    async def handle_edit_command_callback(query: types.CallbackQuery):
         logger.info(f"Received a /{query.data} command from user {query.from_user.id} | {query.from_user.username}")
-        if query.data == "admin_edit_command_response":
+        if query.data == "admin_edit_command":
             await bot.send_message(query.from_user.id,
                                    "Please enter the command name (starting with '/') that you want to edit.")
             await Form.edit_command.set()
-        elif query.data == "admin_edit_command_panel":
+        elif query.data == "admin_edit_panel_command":
             await bot.send_message(query.from_user.id,
-                                   "Please enter the panel command name (starting with '/') that you want to edit.")
+                                   "Please enter the panel-command name (starting with '/') that you want to edit.")
             await Form.edit_panel.set()
 
     @dp.message_handler(state=Form.edit_command)
@@ -94,24 +96,26 @@ def setup_admin_handlers(dp, db):
         command = data[0][1:]
         keyboard = types.InlineKeyboardMarkup()
         keyboard.add(
-            types.InlineKeyboardButton("Command", callback_data="admin_edit_command_name"))
+            types.InlineKeyboardButton("Edit command name", callback_data="admin_edit_command_name"))
         keyboard.add(
-            types.InlineKeyboardButton("Response", callback_data="admin_edit_command_response"))
-        await msg.reply("Choose what you want to edit:", reply_markup=keyboard)
+            types.InlineKeyboardButton("Edit command response", callback_data="admin_edit_command_response"))
+        await msg.reply("Choose what you want to edit exactly:", reply_markup=keyboard)
         await state.update_data(command=command)
-        await Form.edit_choice.set()
 
     @dp.callback_query_handler(MyAdminFilter(db),
-                               lambda query: query.data in ["admin_edit_command_name", "admin_edit_command_response"])
-    async def handle_edit_choice_callback(query: types.CallbackQuery, state: FSMContext):
-        logger.info(f"Received a /{query.data} command from user {query.from_user.id} | {query.from_user.username}")
+                               lambda query: query.data in ["admin_edit_command_name", "admin_edit_command_response"], state=Form.edit_command)
+    async def handle_edit_command_name_response_callback(query: types.CallbackQuery, state: FSMContext):
+        state_data = await state.get_data()
+        old_command = state_data['command']
         if query.data == "admin_edit_command_name":
+            await state.update_data(old_command=old_command)
             await bot.send_message(query.from_user.id,
-                                   "Please enter the new command name (starting with '/').")
+                                   "Please enter the new name for the command (starting with '/').")
             await Form.edit_command_name.set()
         elif query.data == "admin_edit_command_response":
+            await state.update_data(old_command=old_command)
             await bot.send_message(query.from_user.id,
-                                   "Please enter the new response text.")
+                                   "Please enter the new response for the command.")
             await Form.edit_command_response.set()
 
     @dp.message_handler(state=Form.edit_command_name)
@@ -123,7 +127,7 @@ def setup_admin_handlers(dp, db):
             return
         new_command = data[0][1:]
         state_data = await state.get_data()
-        old_command = state_data['command']
+        old_command = state_data['old_command']
         await db.update_command_name(old_command, new_command)
         logger.info(f"Command /{old_command} was updated by admin {msg.from_user.id} | {msg.from_user.username}")
         await msg.reply(f"Command /{old_command} was successfully updated to /{new_command}.")
@@ -132,9 +136,10 @@ def setup_admin_handlers(dp, db):
     @dp.message_handler(state=Form.edit_command_response)
     async def edit_command_response_step(msg: types.Message, state: FSMContext):
         new_response = msg.text
+        await state.update_data(response=new_response)
         state_data = await state.get_data()
         command = state_data['command']
-        await db.update_command_response(command, new_response)
+        await db.edit_command_response(command, new_response)
         logger.info(
             f"Response for command /{command} was updated by admin {msg.from_user.id} | {msg.from_user.username}")
         await msg.reply(f"Response for command /{command} was successfully updated to '{new_response}'.")
@@ -150,31 +155,35 @@ def setup_admin_handlers(dp, db):
         command = data[0][1:]
         keyboard = types.InlineKeyboardMarkup()
         keyboard.add(
-            types.InlineKeyboardButton("Command", callback_data="admin_edit_panel_name"))
+            types.InlineKeyboardButton("Edit panel-command name", callback_data="admin_edit_panel_name"))
         keyboard.add(
-            types.InlineKeyboardButton("Response", callback_data="admin_edit_panel_response"))
+            types.InlineKeyboardButton("Edit panel-command response", callback_data="admin_edit_panel_response"))
         keyboard.add(
-            types.InlineKeyboardButton("Subcommand", callback_data="admin_edit_panel_subcommand"))
+            types.InlineKeyboardButton("Edit panel-subcommand (name or response)", callback_data="admin_edit_panel_subcommand"))
         await msg.reply("Choose what you want to edit:", reply_markup=keyboard)
         await state.update_data(command=command)
-        await Form.edit_choice.set()
 
     @dp.callback_query_handler(MyAdminFilter(db),
-                               lambda query: query.data in ["admin_edit_panel_name", "admin_edit_panel_response", "admin_edit_panel_subcommand"])
+                               lambda query: query.data in ["admin_edit_panel_name", "admin_edit_panel_response", "admin_edit_panel_subcommand"], state=Form.edit_panel)
     async def handle_edit_choice_callback(query: types.CallbackQuery, state: FSMContext):
         logger.info(f"Received a /{query.data} command from user {query.from_user.id} | {query.from_user.username}")
+        state_data = await state.get_data()
+        old_command = state_data['command']
         if query.data == "admin_edit_panel_name":
+            await state.update_data(old_command=old_command)
             await bot.send_message(query.from_user.id,
                                    "Please enter the new panel command name (starting with '/').")
             await Form.edit_panel_name.set()
         elif query.data == "admin_edit_panel_response":
+            await state.update_data(old_command=old_command)
             await bot.send_message(query.from_user.id,
                                    "Please enter the new response text.")
             await Form.edit_panel_response.set()
         elif query.data == "admin_edit_panel_subcommand":
+            await state.update_data(old_command=old_command)
             await bot.send_message(query.from_user.id,
                                    "Please enter the subcommand name (starting with '/') that you want to edit.")
-            await Form.edit_subcommand.set()
+            await Form.edit_panel_subcommand.set()
 
     @dp.message_handler(state=Form.edit_panel_name)
     async def edit_panel_name_step(msg: types.Message, state: FSMContext):
@@ -183,9 +192,8 @@ def setup_admin_handlers(dp, db):
             await msg.reply(
                 "Incorrect format. Please enter the new panel command name (starting with '/').")
             return
-        new_command = data[0][1:]
+        new_command = data[1:]
         state_data = await state.get_data()
-        print(state_data)
         old_command = state_data['command']
         await db.update_command_name(old_command, new_command)
         logger.info(f"Panel /{old_command} was updated by admin {msg.from_user.id} | {msg.from_user.username}")
@@ -195,14 +203,15 @@ def setup_admin_handlers(dp, db):
     @dp.message_handler(state=Form.edit_panel_response)
     async def edit_panel_response_step(msg: types.Message, state: FSMContext):
         new_response = msg.text
+        await state.update_data(response=new_response)
         state_data = await state.get_data()
         command = state_data['command']
-        await db.update_command_response(command, new_response)
+        await db.edit_command_response(command, new_response)
         logger.info(f"Response for panel /{command} was updated by admin {msg.from_user.id} | {msg.from_user.username}")
         await msg.reply(f"Response for panel /{command} was successfully updated to '{new_response}'.")
         await state.finish()
 
-    @dp.message_handler(state=Form.edit_subcommand)
+    @dp.message_handler(state=Form.edit_panel_subcommand)
     async def edit_subcommand_step(msg: types.Message, state: FSMContext):
         data = msg.text.split(maxsplit=1)
         if len(data) != 1 or not data[0].startswith('/'):
@@ -212,21 +221,25 @@ def setup_admin_handlers(dp, db):
         subcommand = data[0][1:]
         keyboard = types.InlineKeyboardMarkup()
         keyboard.add(
-            types.InlineKeyboardButton("Command", callback_data="admin_edit_subcommand_name"))
+            types.InlineKeyboardButton("Edit subcommand name", callback_data="admin_edit_subcommand_name"))
         keyboard.add(
-            types.InlineKeyboardButton("Response", callback_data="admin_edit_subcommand_response"))
+            types.InlineKeyboardButton("Edit subcommand response", callback_data="admin_edit_subcommand_response"))
         await msg.reply("Choose what you want to edit:", reply_markup=keyboard)
         await state.update_data(subcommand=subcommand)
 
     @dp.callback_query_handler(MyAdminFilter(db),
-                               lambda query: query.data in ["admin_edit_subcommand_name", "admin_edit_subcommand_response"])
+                               lambda query: query.data in ["admin_edit_subcommand_name", "admin_edit_subcommand_response"], state=Form.edit_panel_subcommand)
     async def handle_edit_choice_callback(query: types.CallbackQuery, state: FSMContext):
-        logger.info(f"Received a /{query.data} command from user {query.from_user.id} | {query.from_user.username}")
+        logger.info(f"Received a /{query.data} command from admin {query.from_user.id} | {query.from_user.username}")
+        state_data = await state.get_data()
+        old_subcommand = state_data['subcommand']
         if query.data == "admin_edit_subcommand_name":
+            await state.update_data(old_subcommand=old_subcommand)
             await bot.send_message(query.from_user.id,
                                    "Please enter the new subcommand name (starting with '/').")
             await Form.edit_subcommand_name.set()
         elif query.data == "admin_edit_subcommand_response":
+            await state.update_data(old_subcommand=old_subcommand)
             await bot.send_message(query.from_user.id,
                                    "Please enter the new response text.")
             await Form.edit_subcommand_response.set()
@@ -238,20 +251,22 @@ def setup_admin_handlers(dp, db):
             await msg.reply(
                 "Incorrect format. Please enter the new subcommand name (starting with '/').")
             return
-        new_command = data[0][1:]
+        new_subcommand = data[0][1:]
+        await state.update_data(subcommand=new_subcommand)
         state_data = await state.get_data()
-        old_command = state_data['subcommand']
-        await db.update_command_name(old_command, new_command)
-        logger.info(f"Subcommand /{old_command} was updated by admin {msg.from_user.id} | {msg.from_user.username}")
-        await msg.reply(f"Subcommand /{old_command} was successfully updated to /{new_command}.")
+        old_subcommand = state_data['old_subcommand']
+        await db.update_command_name(old_subcommand, new_subcommand)
+        logger.info(f"Subcommand /{old_subcommand} was updated by admin {msg.from_user.id} | {msg.from_user.username}")
+        await msg.reply(f"Subcommand /{old_subcommand} was successfully updated to /{new_subcommand}.")
         await state.finish()
 
     @dp.message_handler(state=Form.edit_subcommand_response)
     async def edit_subcommand_response_step(msg: types.Message, state: FSMContext):
         new_response = msg.text
+        await state.update_data(response=new_response)
         state_data = await state.get_data()
         command = state_data['subcommand']
-        await db.update_command_response(command, new_response)
+        await db.edit_command_response(command, new_response)
         logger.info(
             f"Response for subcommand /{command} was updated by admin {msg.from_user.id} | {msg.from_user.username}")
         await msg.reply(f"Response for subcommand /{command} was successfully updated to '{new_response}'.")
